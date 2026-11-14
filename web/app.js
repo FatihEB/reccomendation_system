@@ -59,7 +59,7 @@ async function findFilms() {
     if (activeRequest === request) {
       status.textContent = request.signal.reason === 'timeout'
         ? 'Scoring took too long. Select Find films to try again.'
-        : 'Could not get recommendations from the local app. Select Find films to retry.';
+        : 'Could not get recommendations. Select Find films to retry.';
     }
   } finally {
     clearTimeout(timeout);

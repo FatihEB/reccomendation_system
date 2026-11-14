@@ -9,7 +9,6 @@ from tempfile import TemporaryDirectory
 from zipfile import ZipFile
 
 import numpy as np
-import pandas as pd
 
 from catalog import Catalogue
 from snapshots import DATA, ML, MOOD, digest
@@ -21,6 +20,8 @@ RECORD = np.dtype([('user', '<u4'), ('item', '<u4'), ('rating', '<f4')])
 
 
 def train(data, compiler=None, prebuilt=None):
+    import pandas as pd
+
     catalogue = Catalogue(data)
     archive_path = data / ML
     if not archive_path.exists():

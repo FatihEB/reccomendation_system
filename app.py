@@ -3,6 +3,7 @@
 import argparse
 import base64
 import binascii
+import csv
 from email import policy
 from email.parser import BytesParser
 from html import escape
@@ -24,6 +25,7 @@ from snapshots import DATA
 WEB = Path(__file__).resolve().parent / 'web'
 MODELS = {
     'taste': 'Personal Taste',
+    'taste_genome': 'Personal Taste · genre, mood and storytelling',
     'taste_credits': 'Personal Taste · credits',
     'taste_traits': 'Personal Taste · mood and genre',
     'audience': 'TMDB audience',
@@ -36,6 +38,7 @@ DEFAULT_MODEL = 'audience'
 VIEWERS = {'first': 'Viewer 1', 'second': 'Viewer 2', 'shared': 'Both viewers'}
 SEEN = {'neither': 'Neither viewer has seen', 'one': 'Exactly one viewer has seen', 'both': 'Both viewers have seen'}
 LIMIT = 16 * 1024 * 1024
+UPLOAD_ERRORS = (UnicodeError, BadZipFile, binascii.Error, csv.Error, RuntimeError, NotImplementedError)
 
 
 def watched_overrides(catalogue, data):
@@ -50,11 +53,13 @@ def watched_overrides(catalogue, data):
 
 def recommend(catalogue, models, payload, overrides=None):
     mode = payload.get('mode')
+    if not isinstance(mode, str):
+        raise ValueError('Choose a recommendation mode.')
     selected = {'first': [0], 'second': [1], 'shared': [0, 1]}.get(mode)
     if selected is None:
         raise ValueError('Choose a recommendation mode.')
     model = payload.get('model') or DEFAULT_MODEL
-    if model not in MODELS or model not in models.names:
+    if not isinstance(model, str) or model not in MODELS or model not in models.names:
         raise ValueError('That model is unavailable. Train MovieLens or select a snapshot baseline.')
     supplied = payload.get('imports')
     if not isinstance(supplied, list) or len(supplied) != 2:
@@ -163,6 +168,8 @@ def options(labels, selected):
 
 
 def seen_options(selected):
+    if not isinstance(selected, list):
+        selected = ['neither']
     return ''.join(
         f'<label><input type="checkbox" name="seen" value="{key}"{" checked" if key in selected else ""}> {label}</label>'
         for key, label in SEEN.items()
@@ -211,14 +218,68 @@ def film_card(film, names):
       </article>"""
 
 
+def render_page(models, payload=None, data=None, error='', hosted=False):
+    payload = payload or {}
+    available = {key: label for key, label in MODELS.items() if key in models.names}
+    default = 'taste' if hosted else DEFAULT_MODEL
+    notice = error
+    cards = ''
+    usernames = {}
+    if data:
+        usernames = {slot: profile['username'] for slot, profile in zip(data['slots'], data['profiles'])}
+        names = {slot: f'@{username}' if username else f'Viewer {slot + 1}' for slot, username in usernames.items()}
+        summary = [
+            f"{names[slot]}: {profile['ratings']} matched ratings, {profile['watched']} watched films"
+            for slot, profile in zip(data['slots'], data['profiles'])
+        ]
+        notice = ' · '.join([*summary, f"{data['candidates']:,} eligible films", MODELS[data['model']]])
+        if data['coverage_adjusted']:
+            notice += ' · Ranking adjusted for MovieLens coverage'
+        cards = ''.join(film_card(film, names) for film in data['films']) or '<p>No films meet the current filters.</p>'
+    elif not hosted and not notice and 'collaborative' not in available:
+        notice = 'For MovieLens models, run python train.py and restart the app.'
+    document = Template((WEB / 'index.html').read_text(encoding='utf-8')).substitute(
+        viewer_options=options(VIEWERS, payload.get('mode', 'first')),
+        model_options=options(available, payload.get('model') or default),
+        seen_options=seen_options(payload.get('seen', ['neither'])),
+        runtime=escape(str(payload['runtime'])) if payload.get('runtime') is not None else '',
+        status=escape(notice),
+        results=cards,
+        first_username=escape('@' + usernames[0]) if usernames.get(0) else '',
+        second_username=escape('@' + usernames[1]) if usernames.get(1) else '',
+        hosting_notice=HOSTING_NOTICE if hosted else '',
+    )
+    return document.encode()
+
+
+HOSTING_NOTICE = """<p class="hint">Uploads are sent to this service for scoring and processed in memory.
+Only upload exports you have permission to share. This is a noncommercial research demo.</p>
+<details><summary>Data sources</summary><p>
+<a href="https://huggingface.co/datasets/fractalintelligence/mooduel-v1.0">Mooduel v1.0</a>
+by Sutirtha Basak and Mooduel contributors, CC BY-NC 4.0. Film facts and audience scores
+in that snapshot originate from <a href="https://www.themoviedb.org">TMDB</a>.
+The genre and mood features are transformed for scoring.</p><p>
+<a href="https://grouplens.org/datasets/movielens/32m/">MovieLens 32M</a> by GroupLens Research,
+University of Minnesota, provides catalogue links and research ratings.
+<a href="https://grouplens.org/datasets/movielens/tag-genome-2021/">Tag Genome 2021</a>
+provides relevance scores grouped into traits, CC BY-NC 3.0. Information courtesy of
+<a href="https://www.imdb.com">IMDb</a>. Used with permission. IMDb's non-commercial
+datasets provide director and writer credits.</p></details>"""
+
+RESPONSE_HEADERS = {
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     def reply(self, status, body, content_type):
         self.send_response(status)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(body)))
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Content-Security-Policy', "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        for key, value in RESPONSE_HEADERS.items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -226,35 +287,7 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(status, json.dumps(value).encode(), 'application/json; charset=utf-8')
 
     def page(self, status=200, payload=None, data=None, error=''):
-        payload = payload or {}
-        available = {key: label for key, label in MODELS.items() if key in self.server.models.names}
-        notice = error
-        cards = ''
-        usernames = {}
-        if data:
-            usernames = {slot: profile['username'] for slot, profile in zip(data['slots'], data['profiles'])}
-            names = {slot: f'@{username}' if username else f'Viewer {slot + 1}' for slot, username in usernames.items()}
-            summary = [
-                f"{names[slot]}: {profile['ratings']} matched ratings, {profile['watched']} watched films"
-                for slot, profile in zip(data['slots'], data['profiles'])
-            ]
-            notice = ' · '.join([*summary, f"{data['candidates']:,} eligible films", MODELS[data['model']]])
-            if data['coverage_adjusted']:
-                notice += ' · Ranking adjusted for MovieLens coverage'
-            cards = ''.join(film_card(film, names) for film in data['films']) or '<p>No films meet the current filters.</p>'
-        elif not notice and 'collaborative' not in available:
-            notice = 'For MovieLens models, run python train.py and restart the app.'
-        document = Template((WEB / 'index.html').read_text(encoding='utf-8')).substitute(
-            viewer_options=options(VIEWERS, payload.get('mode', 'first')),
-            model_options=options(available, payload.get('model') or DEFAULT_MODEL),
-            seen_options=seen_options(payload.get('seen', ['neither'])),
-            runtime=escape(str(payload['runtime'])) if payload.get('runtime') is not None else '',
-            status=escape(notice),
-            results=cards,
-            first_username=escape('@' + usernames[0]) if usernames.get(0) else '',
-            second_username=escape('@' + usernames[1]) if usernames.get(1) else '',
-        )
-        self.reply(status, document.encode(), 'text/html; charset=utf-8')
+        self.reply(status, render_page(self.server.models, payload, data, error), 'text/html; charset=utf-8')
 
     def do_GET(self):
         if self.path == '/':
@@ -322,7 +355,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(200, result)
         except (BrokenPipeError, ConnectionResetError):
             return
-        except (UnicodeError, BadZipFile, binascii.Error, json.JSONDecodeError):
+        except UPLOAD_ERRORS:
             reply_error(400, 'The upload could not be read. Use a UTF-8 CSV or a Letterboxd export ZIP.')
         except ValueError as error:
             reply_error(400, str(error))

@@ -12,7 +12,7 @@ from train import MODEL
 
 CLEAN = ('random', 'audience', 'mooduel')
 MOVIELENS = ('popularity', 'ml_audience', 'collaborative', 'collaborative_mooduel')
-TASTE = ('taste_traits', 'taste_credits', 'taste')
+TASTE = ('taste_traits', 'taste_credits', 'taste', 'taste_genome')
 NUMERIC = ('valence', 'arousal', 'dominance', 'absorption', 'hedonic', 'eudaimonic',
            'psych_rich', 'comfort_level', 'conversation_potential')
 CATEGORIES = ('pacing', 'emotional_arc')
@@ -24,19 +24,20 @@ def ridge(design, ratings, penalties):
 
 class MoodFeatures:
     def __init__(self, movies):
+        covered = [movie for movie in movies if movie.mood]
+        self.rows = np.full(len(movies), -1, dtype=np.int32)
+        present = np.fromiter((movie.mood is not None for movie in movies), dtype=bool, count=len(movies))
+        self.rows[present] = np.arange(len(covered), dtype=np.int32)
         self.names = [name.replace('_', ' ') for name in NUMERIC]
         tokens = set()
-        for movie in movies:
-            if movie.mood:
-                tokens.update(movie.mood[name] for name in CATEGORIES if movie.mood[name])
-                tokens.update(movie.genres)
-                tokens.update(json.loads(movie.mood['dominant_emotions'] or '[]'))
+        for movie in covered:
+            tokens.update(movie.mood[name] for name in CATEGORIES if movie.mood[name])
+            tokens.update(movie.genres)
+            tokens.update(json.loads(movie.mood['dominant_emotions'] or '[]'))
         self.names += sorted(tokens)
         lookup = {name: k for k, name in enumerate(self.names)}
-        self.values = np.zeros((len(movies), len(self.names)), dtype=np.float32)
-        for index, movie in enumerate(movies):
-            if not movie.mood:
-                continue
+        self.values = np.zeros((len(covered), len(self.names)), dtype=np.float32)
+        for index, movie in enumerate(covered):
             for k, field in enumerate(NUMERIC):
                 self.values[index, k] = float(movie.mood[field]) if movie.mood[field] else np.nan
             flags = {*movie.genres, *json.loads(movie.mood['dominant_emotions'] or '[]'),
@@ -48,7 +49,7 @@ class MoodFeatures:
         known = present[indices]
         if known.sum() < 3:
             return None
-        train = self.values[indices[known]].astype(np.float64)
+        train = self.values[self.rows[indices[known]]].astype(np.float64)
         count = np.isfinite(train[:, :len(NUMERIC)]).sum(axis=0)
         center = np.divide(np.nansum(train[:, :len(NUMERIC)], axis=0), np.maximum(count, 1))
         train[:, :len(NUMERIC)] = np.nan_to_num(train[:, :len(NUMERIC)] - center)
@@ -57,16 +58,22 @@ class MoodFeatures:
 
     def effects(self, fit, indices=None):
         center, weights = fit
-        x = self.values if indices is None else self.values[indices]
+        x = self.values if indices is None else self.values[self.rows[indices]]
         x = x.copy()
+        if indices is not None:
+            x = np.where(np.expand_dims(self.rows[indices] >= 0, axis=-1), x, 0)
         x[..., :len(NUMERIC)] = np.nan_to_num(x[..., :len(NUMERIC)] - center)
         return x * weights
 
     def predict(self, fit, present):
         center, weights = fit
         numeric = np.nan_to_num(self.values[:, :len(NUMERIC)] - center)
-        result = numeric @ weights[:len(NUMERIC)] + self.values[:, len(NUMERIC):] @ weights[len(NUMERIC):]
-        return np.where(present, result, 0.0)
+        result = numeric @ weights[:len(NUMERIC)] + np.einsum(
+            'ij,j->i', self.values[:, len(NUMERIC):], weights[len(NUMERIC):], dtype=np.float64
+        )
+        prediction = np.zeros(len(present))
+        prediction[present] = result
+        return prediction
 
 
 @dataclass
@@ -105,11 +112,18 @@ class Models:
             self.coverage = 0.4 + 0.6 * self.counts / (self.counts + 30)
             self.names += MOVIELENS
         self.taste = Taste(catalogue, data, self.mood, self.tmdb, self.counts if self.metadata else None)
+        # Feature matrices now contain every Mooduel field used by scoring. Retain only
+        # the arc needed by explanations instead of every original CSV string.
+        for movie in catalogue.movies:
+            if movie.mood:
+                movie.mood = {'emotional_arc': movie.mood['emotional_arc']}
         self.names += ('taste_traits',)
         if self.taste.credits is not None:
             self.names += ('taste_credits',)
         if self.taste.genome is not None and self.taste.credits is not None:
             self.names += ('taste',)
+        elif self.taste.genome is not None:
+            self.names += ('taste_genome',)
 
     @staticmethod
     def audience(base, indices, ratings):

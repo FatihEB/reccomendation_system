@@ -2,6 +2,8 @@
 
 A local research prototype for individual and two-person movie recommendations from Letterboxd exports. Results show personal star estimates, available movie facts, and the sources behind them. Uploads are processed in memory by a server bound to `127.0.0.1`.
 
+For the public deployment work and current launch requirements, see [Hosting](HOSTING.md).
+
 ## Setup
 
 On Windows x64, extract the GitHub download and double-click **Run Letterboxd.exe**. Keep it beside the other repository files. The first run downloads Python, dependencies and about 775 MB of data, prepares the credits and traits, and trains MovieLens locally with the bundled factorizer. The console shows progress and stays open while the app runs. Subsequent runs use the cache. Choose any of the five sample exports in `profiles/` in the app.

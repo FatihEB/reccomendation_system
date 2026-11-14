@@ -146,12 +146,16 @@ class Block:
     present: np.ndarray
     penalty: float
     spoiler_columns: tuple = ()
+    row_lookup: np.ndarray | None = None
+
+    def rows(self, indices):
+        return indices if self.row_lookup is None else self.row_lookup[indices]
 
     def fit(self, indices, residual):
         valid = self.present[indices]
         if valid.sum() < 5:
             return None
-        rows = self.values[indices[valid]].astype(np.float64)
+        rows = self.values[self.rows(indices[valid])].astype(np.float64)
         center = rows.mean(axis=0)
         scale = np.maximum(rows.std(axis=0), 0.32)
         design = (rows - center) / scale
@@ -168,7 +172,12 @@ class Block:
 
     def predict(self, fitted):
         center, weights = fitted
-        return np.where(self.present, self.values @ weights - center @ weights, 0)
+        effect = np.einsum('ij,j->i', self.values, weights, dtype=np.float64) - center @ weights
+        if self.row_lookup is None:
+            return np.where(self.present, effect, 0)
+        prediction = np.zeros(len(self.present))
+        prediction[self.present] = effect
+        return prediction
 
 
 class CreditFeatures:
@@ -258,18 +267,18 @@ class Taste:
         for row, (names, pairs) in enumerate(zip(genres, combinations_by_movie)):
             for label in [*names, *(' + '.join(pair) for pair in pairs if common[pair] >= 250)]:
                 values[row, lookup[label]] = 0.7 if ' + ' in label else 1
-        mood_terms = np.zeros((len(movies), len(MOOD_TERMS)), dtype=np.float32)
+        mood_terms = np.zeros((len(mood.values), len(MOOD_TERMS)), dtype=np.float32)
         for row, movie in enumerate(movies):
             if movie.mood:
                 tags = set(json.loads(movie.mood['mood_tags'] or '[]'))
-                mood_terms[row] = [bool(tags & terms) for terms in MOOD_TERMS.values()]
+                mood_terms[mood.rows[row]] = [bool(tags & terms) for terms in MOOD_TERMS.values()]
         arcs = {movie.mood['emotional_arc'] for movie in movies if movie.mood}
         genre_labels = {genre for movie in movies for genre in movie.genres}
         retained = [index for index, label in enumerate(mood.names) if label not in arcs | genre_labels]
         labels = tuple(mood.names[index] for index in retained) + tuple(MOOD_TERMS)
         features = np.column_stack((np.nan_to_num(mood.values[:, retained]), mood_terms))
         return [Block('Genre', tuple(feature_names), values, values.any(axis=1), 40),
-                Block('Mooduel', labels, features, catalogue.mood_present, 55)]
+                Block('Mooduel', labels, features, catalogue.mood_present, 55, row_lookup=mood.rows)]
 
     @staticmethod
     def load_genome(catalogue, path):
@@ -309,7 +318,7 @@ class Taste:
             remaining = residual
         prediction = base + self.audience + credit_fit
         blocks = list(self.blocks)
-        if self.genome is not None and model == 'taste':
+        if self.genome is not None and model in {'taste', 'taste_genome'}:
             blocks.append(self.genome)
         parts = []
         for block in blocks:
@@ -343,7 +352,7 @@ class Taste:
         strongest = []
         for block, (center, weights) in fit.parts:
             if block.present[index]:
-                effects = (block.values[index] - center) * weights
+                effects = (block.values[block.rows(index)] - center) * weights
                 for col in np.argsort(-np.abs(effects))[:5]:
                     if col not in block.spoiler_columns and abs(effects[col]) >= 0.035:
                         strongest.append((abs(effects[col]), f'{block.labels[col]} ({effects[col]:+.2f}, {block.source})'))

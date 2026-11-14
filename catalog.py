@@ -194,6 +194,35 @@ def export_members(archive, files):
     return selected
 
 
+def export_rows(stream):
+    def lines():
+        while line := stream.readline(131073):
+            if len(line) > 131072:
+                raise ValueError('An export contains an oversized CSV line.')
+            yield line
+
+    reader = csv.reader(lines(), strict=True)
+    headers = next(reader, [])
+    if len(headers) > 64 or len(set(headers)) != len(headers):
+        raise ValueError('An export contains invalid CSV columns.')
+    relevant = {'Name', 'Title', 'Year', 'Rating', 'Date', 'Letterboxd URI',
+                'TMDB ID', 'IMDb ID', 'MovieLens ID', 'Username', 'Favorite Films'}
+    columns = [(index, name) for index, name in enumerate(headers) if name in relevant]
+    yield headers
+    for count, row in enumerate(reader, 1):
+        if count > 30000 or len(row) > len(headers):
+            raise ValueError('An export contains too many rows or columns.')
+        if row:
+            yield {name: row[index] for index, name in columns if index < len(row)}
+
+
+def upload_table(archive, member):
+    with archive.open(member) as stream, TextIOWrapper(stream, encoding='utf-8-sig', newline='') as decoded:
+        rows = export_rows(decoded)
+        next(rows)
+        yield from rows
+
+
 def profile_username(row):
     return (row.get('Username') or '').strip() or None
 
@@ -203,7 +232,9 @@ def inspect_username(data):
         member = export_members(archive, {'profile.csv'}).get('profile.csv')
         if member is None:
             return None
-        rows = archive_rows(archive, member)
+        if member.file_size > 256 * 1024:
+            raise ValueError('The ZIP profile table is too large.')
+        rows = upload_table(archive, member)
         try:
             return profile_username(next(rows, {}))
         finally:
@@ -212,8 +243,8 @@ def inspect_username(data):
 
 def read_export(source, filename):
     if filename.lower().endswith('.csv'):
-        reader = csv.DictReader(TextIOWrapper(source, encoding='utf-8-sig', newline=''))
-        fields = set(reader.fieldnames or ())
+        reader = export_rows(TextIOWrapper(source, encoding='utf-8-sig', newline=''))
+        fields = set(next(reader))
         if not (fields & {'Name', 'Title'} and {'Year', 'Rating'} <= fields):
             raise ValueError('The ratings CSV needs Name or Title, Year and Rating columns.')
         return {'ratings.csv': list(reader)}
@@ -222,9 +253,11 @@ def read_export(source, filename):
     files = {'ratings.csv', 'watched.csv', 'watchlist.csv', 'diary.csv', 'profile.csv'}
     with ZipFile(source) as archive:
         selected = export_members(archive, files)
+        if sum(member.file_size for member in selected.values()) > 16 * 1024**2:
+            raise ValueError('The ZIP history tables are too large when expanded.')
         if not selected.keys() & {'ratings.csv', 'watched.csv', 'diary.csv'}:
             raise ValueError('The ZIP does not contain a Letterboxd history table.')
-        return {key: list(archive_rows(archive, item)) for key, item in selected.items()}
+        return {key: list(upload_table(archive, item)) for key, item in selected.items()}
 
 
 def import_profile(catalogue, source, filename=None, manual_favorites=()):
