@@ -28,6 +28,7 @@ $uv = Join-Path $runtime 'uv.exe'
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $runtime 'python'
 $env:UV_CACHE_DIR = Join-Path $runtime 'cache'
 $env:UV_NO_MODIFY_PATH = '1'
+$env:UV_NATIVE_TLS = 'true'
 $python = Join-Path $root '.venv\Scripts\python.exe'
 $setup = Join-Path $runtime 'requirements.sha256'
 $requirements = FileSha256 requirements.txt
