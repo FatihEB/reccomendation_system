@@ -4,6 +4,23 @@ const status = document.getElementById('status');
 const results = document.getElementById('results');
 let activeRequest;
 
+for (const select of form.querySelectorAll('select[name$="_profile"]')) {
+  const slot = select.name.replace('_profile', '');
+  const input = document.getElementById(slot);
+  const identity = document.getElementById(input.getAttribute('aria-describedby'));
+  const syncProfile = () => {
+    input.disabled = Boolean(select.value);
+    if (select.value) {
+      input.value = '';
+      identity.textContent = select.selectedOptions[0].textContent;
+    } else {
+      identity.textContent = '';
+    }
+  };
+  select.addEventListener('change', syncProfile);
+  syncProfile();
+}
+
 for (const input of form.querySelectorAll('input[type=file]')) {
   const identity = document.getElementById(input.getAttribute('aria-describedby'));
   let lookup;
@@ -39,8 +56,14 @@ async function findFilms() {
   activeRequest = request;
   const fields = new FormData(form);
   const mode = fields.get('mode');
-  if (mode === 'first') fields.delete('second');
-  if (mode === 'second') fields.delete('first');
+  if (mode === 'first') {
+    fields.delete('second');
+    fields.delete('second_profile');
+  }
+  if (mode === 'second') {
+    fields.delete('first');
+    fields.delete('first_profile');
+  }
 
   status.textContent = `Scoring with ${model.selectedOptions[0].textContent}…`;
   results.replaceChildren();
@@ -76,6 +99,6 @@ form.addEventListener('submit', (event) => {
 });
 
 form.addEventListener('change', (event) => {
-  if (event.target !== model && !event.target.matches('input[type="checkbox"][name="seen"]')) return;
+  if (event.target !== model && !event.target.matches('input[type="checkbox"][name="seen"], select[name$="_profile"]')) return;
   if ((activeRequest || results.childElementCount) && form.reportValidity()) findFilms();
 });

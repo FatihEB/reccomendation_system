@@ -16,8 +16,9 @@ h1, h2 { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; marg
 h1 { font-size: clamp(3rem, 8vw, 6rem); letter-spacing: -.05em; line-height: 1; }
 .intro, .metadata, .hint { color: var(--muted); }
 form, article { border: 1px solid var(--border); border-radius: 1rem; background: var(--surface); padding: 1.2rem; }
-.uploads, .controls { display: grid; gap: 1rem; }
-.uploads { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.uploads, .profile-pickers, .controls { display: grid; gap: 1rem; }
+.uploads, .profile-pickers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.profile-pickers { margin-bottom: .5rem; }
 .upload { min-width: 0; }
 .upload-username { display: block; margin-top: .35rem; color: var(--accent); overflow-wrap: anywhere; }
 .upload-username:empty { display: none; }
@@ -46,5 +47,5 @@ summary { cursor: pointer; }
   .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 30rem) {
-  .uploads, .controls, article { grid-template-columns: 1fr; }
+  .uploads, .profile-pickers, .controls, article { grid-template-columns: 1fr; }
 }

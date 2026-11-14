@@ -16,3 +16,5 @@
 !web/app.js
 !web/index.html
 !web/style.css
+!profiles/
+!profiles/*.zip

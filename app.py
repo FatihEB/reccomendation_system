@@ -218,7 +218,23 @@ def film_card(film, names):
       </article>"""
 
 
-def render_page(models, payload=None, data=None, error='', hosted=False):
+def profile_controls(profiles, selected):
+    if not profiles:
+        return ''
+    controls = []
+    for slot, label in (('first', 'Viewer 1'), ('second', 'Viewer 2')):
+        value = selected.get(f'{slot}_profile', '')
+        choices = {'': 'Upload a CSV or ZIP', **profiles}
+        controls.append(f'''<label>{label} profile
+          <select id="{slot}-profile" name="{slot}_profile">{options(choices, value)}</select>
+        </label>''')
+    return f'''<div class="profile-pickers">
+        {''.join(controls)}
+      </div>
+      <p class="hint">Choose a built-in Letterboxd profile or leave it on upload to use your own file.</p>'''
+
+
+def render_page(models, payload=None, data=None, error='', hosted=False, profiles=None):
     payload = payload or {}
     available = {key: label for key, label in MODELS.items() if key in models.names}
     default = 'taste' if hosted else DEFAULT_MODEL
@@ -248,6 +264,7 @@ def render_page(models, payload=None, data=None, error='', hosted=False):
         first_username=escape('@' + usernames[0]) if usernames.get(0) else '',
         second_username=escape('@' + usernames[1]) if usernames.get(1) else '',
         hosting_notice=HOSTING_NOTICE if hosted else '',
+        profile_controls=profile_controls(profiles, payload),
     )
     return document.encode()
 

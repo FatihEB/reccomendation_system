@@ -13,6 +13,7 @@ RUN python prepare_hosted.py --data /snapshots
 FROM base
 COPY app.py catalog.py hosted.py models.py snapshots.py taste.py taste_data.py train.py ./
 COPY web/ ./web/
+COPY profiles/ ./profiles/
 COPY --from=build /snapshots/mooduel-v1.0.csv /snapshots/ml-32m.zip /snapshots/movielens-model.npz /snapshots/tag-genome-traits.npz /snapshots/imdb-credits-local.json /snapshots/
 RUN chmod -R a=rX /app /snapshots
 ENV HOSTED_DATA=/snapshots PORT=10000

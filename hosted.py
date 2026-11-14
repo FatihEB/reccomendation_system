@@ -21,6 +21,7 @@ from snapshots import DATA
 
 MAX_FILE = 5 * 1024**2
 MAX_BODY = 2 * MAX_FILE + 64 * 1024
+BUILT_IN_PROFILES = ('adil', 'aryan', 'fatih', 'xander', 'zeynep')
 HEADERS = {
     **RESPONSE_HEADERS,
     'Referrer-Policy': 'no-referrer',
@@ -39,7 +40,7 @@ class Upload(Request):
 
 
 class PublicApp:
-    def __init__(self, data, host):
+    def __init__(self, data, host, profile_dir=None):
         if not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?', host):
             raise ValueError('Set PUBLIC_HOST to the HTTPS hostname, without a scheme or path.')
         self.host = host
@@ -48,6 +49,21 @@ class PublicApp:
         self.models = Models(self.catalogue, data)
         if 'taste' not in self.models.names or 'collaborative' not in self.models.names:
             raise ValueError('Prepare the hosted snapshots and model caches before starting the service.')
+        profile_dir = Path(profile_dir) if profile_dir else Path(__file__).resolve().parent / 'profiles'
+        self.profiles = {}
+        for key in BUILT_IN_PROFILES:
+            path = profile_dir / f'{key}.zip'
+            if not path.is_file():
+                raise ValueError(f'The built-in profile {path.name} is missing.')
+            contents = path.read_bytes()
+            if len(contents) > MAX_FILE:
+                raise ValueError(f'The built-in profile {path.name} exceeds 5 MB.')
+            username = inspect_username(contents)
+            self.profiles[key] = {
+                'name': path.name,
+                'data': contents,
+                'label': f'@{username}' if username else path.stem,
+            }
         self.work = BoundedSemaphore(1)
         self.rate_lock = Lock()
         self.tokens = 8.0
@@ -68,7 +84,8 @@ class PublicApp:
             return True
 
     def page(self, status=200, payload=None, result=None, error=''):
-        return Response(render_page(self.models, payload, result, error, hosted=True),
+        labels = {key: profile['label'] for key, profile in self.profiles.items()}
+        return Response(render_page(self.models, payload, result, error, hosted=True, profiles=labels),
                         status=status, mimetype='text/html')
 
     def upload(self, request):
@@ -95,6 +112,15 @@ class PublicApp:
                 return error(400, 'The upload is missing its multipart boundary.')
             for slot, name in enumerate(('first', 'second')):
                 file = request.files.get(name)
+                profile_key = request.form.get(f'{name}_profile', '')
+                if profile_key:
+                    if profile_key not in self.profiles:
+                        return error(400, f'Choose a valid built-in profile for viewer {slot + 1}.')
+                    if file and file.filename:
+                        return error(400, f'Choose either a built-in profile or an upload for viewer {slot + 1}.')
+                    profile = self.profiles[profile_key]
+                    payload['imports'][slot] = {'name': profile['name'], 'data': profile['data']}
+                    payload[f'{name}_profile'] = profile_key
                 if file and file.filename:
                     data = file.stream.read(MAX_FILE + 1)
                     if len(data) > MAX_FILE:
