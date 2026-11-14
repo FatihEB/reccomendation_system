@@ -18,3 +18,4 @@
 !web/style.css
 !profiles/
 !profiles/*.zip
+!profiles/watched-overrides.json

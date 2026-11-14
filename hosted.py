@@ -13,7 +13,7 @@ from waitress import serve
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 from werkzeug.wrappers import Request, Response
 
-from app import MODELS, RESPONSE_HEADERS, UPLOAD_ERRORS, WEB, recommend, render_page
+from app import MODELS, RESPONSE_HEADERS, UPLOAD_ERRORS, WEB, recommend, render_page, watched_overrides
 from catalog import Catalogue, inspect_username
 from models import Models
 from snapshots import DATA
@@ -64,6 +64,7 @@ class PublicApp:
                 'data': contents,
                 'label': f'@{username}' if username else path.stem,
             }
+        self.watched_overrides = watched_overrides(self.catalogue, profile_dir)
         self.work = BoundedSemaphore(1)
         self.rate_lock = Lock()
         self.tokens = 8.0
@@ -135,7 +136,7 @@ class PublicApp:
             payload.update(mode=request.form.get('mode'), model=request.form.get('model') or 'taste',
                            seen=[choice for choice in request.form.getlist('seen') if choice],
                            runtime=int(runtime) if re.fullmatch(r'[0-9]{1,4}', runtime) else runtime or None)
-            result = recommend(self.catalogue, self.models, payload)
+            result = recommend(self.catalogue, self.models, payload, self.watched_overrides)
             return self.page(payload=payload, result=result)
         except RequestEntityTooLarge:
             return error(413, 'The upload exceeds the form limits.')
