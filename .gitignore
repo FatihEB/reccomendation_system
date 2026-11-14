@@ -1,0 +1,10 @@
+/.venv/
+/data/
+/private/
+__pycache__/
+*.pyc
+*.csv
+*.zip
+!/profiles/*.zip
+*.npz
+*.part

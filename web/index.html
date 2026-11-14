@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>What to watch</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>What to watch</h1>
+    <p class="intro">Find a film to watch on your own or together.</p>
+  </header>
+  <main>
+    <form id="request" method="post" action="/recommend" enctype="multipart/form-data">
+      <div class="uploads">
+        <div class="upload">
+          <label>Viewer 1 <input type="file" id="first" name="first" accept=".csv,.zip" aria-describedby="first-username"></label>
+          <output id="first-username" class="upload-username" for="first" aria-live="polite">$first_username</output>
+        </div>
+        <div class="upload">
+          <label>Viewer 2 <input type="file" id="second" name="second" accept=".csv,.zip" aria-describedby="second-username"></label>
+          <output id="second-username" class="upload-username" for="second" aria-live="polite">$second_username</output>
+        </div>
+      </div>
+      <p class="hint">A Letterboxd export ZIP includes watched history. A ratings CSV only marks the films it lists as watched.</p>
+      <div class="controls">
+        <label>Recommend for
+          <select id="mode" name="mode">$viewer_options</select>
+        </label>
+        <div class="model-control">
+          <label for="model">Model</label>
+          <select id="model" name="model" required>$model_options</select>
+        </div>
+        <label>Max minutes <input id="runtime" name="runtime" type="number" min="1" max="1440" placeholder="Any" value="$runtime"></label>
+        <button type="submit">Find films</button>
+      </div>
+      <fieldset class="seen-filters">
+        <legend>Include films by viewing history</legend>
+        <input type="hidden" name="seen" value="">
+        $seen_options
+      </fieldset>
+    </form>
+    <p id="status" role="status" aria-live="polite">$status</p>
+    <section id="results" aria-label="Recommendations">$results</section>
+  </main>
+</body>
+</html>
