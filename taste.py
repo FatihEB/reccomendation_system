@@ -151,19 +151,31 @@ class Block:
     def rows(self, indices):
         return indices if self.row_lookup is None else self.row_lookup[indices]
 
-    def fit(self, indices, residual):
+    def fit(self, indices, residual, sample_weights=None):
         valid = self.present[indices]
         if valid.sum() < 5:
             return None
         rows = self.values[self.rows(indices[valid])].astype(np.float64)
-        center = rows.mean(axis=0)
-        scale = np.maximum(rows.std(axis=0), 0.32)
+        target = residual[valid]
+        if sample_weights is None:
+            center = rows.mean(axis=0)
+            scale = np.maximum(rows.std(axis=0), 0.32)
+            target = target - target.mean()
+        else:
+            covered_weights = sample_weights[valid]
+            center = np.average(rows, axis=0, weights=covered_weights)
+            variance = np.average((rows - center) ** 2, axis=0, weights=covered_weights)
+            scale = np.maximum(np.sqrt(variance), 0.32)
+            target = target - np.average(target, weights=covered_weights)
         design = (rows - center) / scale
         active = (np.abs(design) > 0.1).sum(axis=0) >= 3
         if not active.any():
             return None
         design = design[:, active]
-        target = residual[valid] - residual[valid].mean()
+        if sample_weights is not None:
+            root_weights = np.sqrt(covered_weights)
+            design = design * root_weights[:, None]
+            target = target * root_weights
         weights = np.zeros(rows.shape[1])
         weights[active] = np.linalg.solve(
             design.T @ design + self.penalty * np.eye(design.shape[1]), design.T @ target
@@ -204,17 +216,21 @@ class CreditFeatures:
         self.lookup = {person: i for i, person in enumerate(self.person_ids)}
         self.size = len(catalogue.movies)
 
-    def fit(self, indices, residual):
+    def fit(self, indices, residual, sample_weights):
         evidence = [defaultdict(list), defaultdict(list)]
-        for index, delta in zip(indices, residual):
+        for index, delta, weight in zip(indices, residual, sample_weights):
             for role, people in enumerate(self.by_movie.get(index, ((), ()))):
                 for person in people:
-                    evidence[role][person].append((int(index), float(delta)))
+                    evidence[role][person].append((int(index), float(delta * weight), float(weight)))
         affinity = np.zeros((2, len(self.lookup)))
+        totals = [{}, {}]
         for role, groups in enumerate(evidence):
             for person, observations in groups.items():
-                affinity[role, self.lookup[person]] = sum(delta for _, delta in observations) / (len(observations) + 4)
-        return affinity, evidence
+                numerator = sum(delta for _, delta, _ in observations)
+                mass = sum(weight for _, _, weight in observations)
+                totals[role][person] = (numerator, mass)
+                affinity[role, self.lookup[person]] = numerator / (mass + 4)
+        return (affinity, evidence), totals
 
     def predict(self, fitted):
         affinity, _ = fitted
@@ -295,22 +311,22 @@ class Taste:
         spoiler = tuple(i for i, label in enumerate(labels) if 'payoff' in label)
         return Block('Tag Genome', labels, values, present, 40, spoiler)
 
-    def fit(self, model, history, indices, ratings):
-        base = float((ratings.sum() + 5 * 3.3) / (len(ratings) + 5))
+    def fit(self, model, history, indices, ratings, sample_weights=None):
+        weights = np.ones(len(indices)) if sample_weights is None else sample_weights
+        base = float(((weights * ratings).sum() + 5 * 3.3) / (weights.sum() + 5))
         residual = ratings - base - self.audience[indices]
         if self.credits and model in {'taste_credits', 'taste'}:
-            credits = self.credits.fit(indices, residual)
+            credits, totals = self.credits.fit(indices, residual, weights)
             credit_fit = self.credits.predict(credits)
             # Bound co-credit accumulation and remove the in-sample contribution before fitting traits.
             credit_fit = np.clip(credit_fit, -1.15, 1.15)
             remaining = residual.copy()
-            for row, (index, delta) in enumerate(zip(indices, residual)):
+            for row, (index, delta, weight) in enumerate(zip(indices, residual, weights)):
                 contribution = 0.0
                 for role, people in enumerate(self.credits.by_movie.get(index, ((), ()))):
                     for person in people:
-                        observations = credits[1][role][person]
-                        numerator = sum(value for _, value in observations) - delta
-                        contribution += numerator / (len(observations) + 3) / len(people) ** 0.5
+                        numerator, mass = totals[role][person]
+                        contribution += (numerator - weight * delta) / (mass - weight + 4) / len(people) ** 0.5
                 remaining[row] -= np.clip(contribution, -1.15, 1.15)
         else:
             credits = None
@@ -322,7 +338,7 @@ class Taste:
             blocks.append(self.genome)
         parts = []
         for block in blocks:
-            fitted = block.fit(indices, remaining)
+            fitted = block.fit(indices, remaining, sample_weights)
             if fitted is not None:
                 effect = np.clip(block.predict(fitted), -0.8, 0.8)
                 remaining -= effect[indices]
@@ -339,7 +355,7 @@ class Taste:
                 if not name or abs(value) < 0.035:
                     continue
                 # Cite different rated films when scoring already-watched candidates.
-                examples = [(i, delta) for i, delta in observations if i != index and delta * value > 0]
+                examples = [(i, delta) for i, delta, _ in observations if i != index and delta * value > 0]
                 if examples:
                     example = max(examples, key=lambda row: abs(row[1]))[0]
                     title = self.catalogue.movies[example].title

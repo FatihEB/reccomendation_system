@@ -3,6 +3,7 @@
 import argparse
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date
 from itertools import combinations
 import json
 from pathlib import Path
@@ -10,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from catalog import Catalogue, import_profile
-from models import CLEAN, MOVIELENS, TASTE, Models, rank_candidates
+from models import CLEAN, MOVIELENS, TASTE, TIME_WEIGHTED_TASTE, Models, rank_candidates
 from snapshots import DATA, ML, MOOD, digest
 from taste import CREDITS_CACHE, GENOME_CACHE
 
@@ -71,7 +72,7 @@ def matched_pairs(models, profile, hidden, allowed):
     return pairs
 
 
-def evaluate_profile(catalogue, models, profile, identifier, detailed, app_order=False, selected=None):
+def evaluate_profile(catalogue, models, profile, identifier, detailed, app_order=False, selected=None, as_of=None):
     output = []
     allowed_base = catalogue.eligible.copy()
     for split in splits(profile):
@@ -85,7 +86,7 @@ def evaluate_profile(catalogue, models, profile, identifier, detailed, app_order
         allowed[list(profile.watched - hidden)] = False
         pairs = matched_pairs(models, profile, hidden, allowed) if split.suite == 'rating_stratified' else []
         for model in selected or models.names:
-            scored = models.score(model, history, seed=42)
+            scored = models.score(model, history, seed=42, rating_dates=profile.rating_dates, as_of=as_of)
             ordering = models.individual_rank(model, scored, history) if app_order else scored.rank
             order = rank_candidates(ordering, allowed)
             ranks = np.zeros(len(allowed), dtype=np.int32)
@@ -176,10 +177,12 @@ def main():
     parser.add_argument('--app-order', action='store_true', help='Apply the same individual ordering as the app.')
     parser.add_argument('--models', nargs='+', help='Limit the comparison to named models.')
     parser.add_argument('--release-cutoff-year', type=int, help='Exclude this year and later. Defaults to the current year.')
+    parser.add_argument('--rating-as-of', type=date.fromisoformat, default=date.today(),
+                        help='Reference date for time weights (YYYY-MM-DD). Defaults to today.')
     args = parser.parse_args()
     catalogue = Catalogue(args.data, args.release_cutoff_year)
     models = Models(catalogue, args.data, use_movielens=not args.clean_only)
-    available = [model for model in models.names if not (args.clean_only and model == 'taste')]
+    available = [model for model in models.names if not (args.clean_only and model in {'taste', TIME_WEIGHTED_TASTE})]
     selected = args.models or available
     if set(selected) - set(available):
         parser.error('Unavailable models: ' + ', '.join(sorted(set(selected) - set(available))))
@@ -196,7 +199,8 @@ def main():
         profile = import_profile(catalogue, export, manual_favorites=favorites or ())
         if len(profile.favorites) != 4:
             print(f'{identifier}: provide four pinned favorites with --favorites to run favorite recovery.')
-        rows.extend(evaluate_profile(catalogue, models, profile, identifier, bool(args.details), args.app_order, selected))
+        rows.extend(evaluate_profile(catalogue, models, profile, identifier, bool(args.details),
+                                     args.app_order, selected, args.rating_as_of))
         coverage[identifier] = {'matched_ratings': len(profile.ratings), 'matched_watched': len(profile.watched),
                                 'favorite_entries': len(profile.favorites),
                                 'matched_favorites': sum(index is not None for _, index in profile.favorites),
@@ -212,6 +216,7 @@ def main():
                 'population_model': models.metadata, 'clean_models': CLEAN,
                 'movielens_models': [model for model in MOVIELENS if model in selected],
                 'taste_models': [model for model in TASTE if model in selected],
+                'rating_as_of': args.rating_as_of.isoformat(),
                 'app_order': args.app_order,
                 'matched_pair_protocol': {'minimum_personal_gap': 1.5, 'max_audience_gap': 0.25,
                                           'minimum_ratings': 25, 'maximum_popularity_ratio': 2},

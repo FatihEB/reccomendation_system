@@ -16,6 +16,14 @@ Director/writer credits and Tag Genome each improved favorite recovery within th
 
 Both movies in each matched pair were held out from the same fit. Their personal ratings differed by at least 1.5 stars. Their shrinkage-adjusted MovieLens means differed by at most 0.25 stars, and both had at least 25 MovieLens ratings with counts within a factor of two. The 341 pair instances reuse films and can recur across seeds. Equal-weight per-profile accuracy was 68.7% for Personal Taste, 68.9% for Mooduel, and 63.7% for TMDB audience. Stratified MAE uses the 620 eligible numeric targets out of 633 instances. This is retrospective evaluation on five profiles, with no group-enjoyment outcomes. The evaluation used app ordering and the source hashes in `data/taste-evaluation.json`. The optional private report records per-title and per-pair results. MovieLens users are anonymous and overlap with the local profiles cannot be verified.
 
+## Time-weight variant
+
+Using the five bundled exports and a rating reference date of 2026-11-14, the variant recovered 5 of 20 pinned favorites in the top 100 with all favorites hidden, matching standard Personal Taste. It recovered 16 of 96 hidden high ratings versus 15 of 96. Stratified rating MAE was 0.697 versus 0.700 stars, and matched-pair accuracy was 65.1% versus 64.5%. This small retrospective comparison uses shuffled holdouts. It does not measure whether the variant predicts future ratings better.
+
+```sh
+python evaluate.py profiles/adil.zip profiles/aryan.zip profiles/fatih.zip profiles/xander.zip profiles/zeynep.zip --data data/hosted --models taste taste_time --app-order --rating-as-of 2026-11-14 --release-cutoff-year 2026 --output data/time-weight-evaluation.json
+```
+
 ## Trait validation
 
 Compared six Tag Genome features with directional human judgments from [SoftAttributes](https://github.com/google-research-datasets/soft-attributes), using only pairs where both titles joined and the rater indicated a direction. A tied prediction receives half credit. The data describe perceived traits, with repeated ratings and overlapping titles.

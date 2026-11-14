@@ -26,4 +26,10 @@ Individual results sort by the raw prediction. The displayed prediction is clipp
 
 The app applies catalogue eligibility, watched-history and optional runtime filters before sorting. Individual mode excludes matched watched films. Shared mode can include any combination of films seen by neither, exactly one, or both viewers. Cards can cite actual training-history ratings for director or writer affinities and show the strongest signed trait contributions. Explanations report contributions before the applicable caps and omit payoff tags to limit spoilers.
 
-The model has no standalone award, recency, or review-extraction term. Tag Genome and Mooduel supply estimated traits, with partial coverage. The rating estimate is a point prediction. The separate [evaluation](TASTE_RESULTS.md) covers favorite recovery, rating error and the ability to distinguish similarly rated and similarly popular films.
+The model has no standalone award, release-year preference, or review-extraction term. Tag Genome and Mooduel supply estimated traits, with partial coverage. The rating estimate is a point prediction. The separate [evaluation](TASTE_RESULTS.md) covers favorite recovery, rating error and the ability to distinguish similarly rated and similarly popular films.
+
+## Personal Taste - Time Weight
+
+This dropdown option blends 70% of the standard raw prediction with 30% of a second fit based on dated ratings. The second fit uses the exported `Date` from the selected rating row for each film. Its weight is `0.35 + 0.65 × 2^(−age_in_days / 730)`. Today's rating has weight 1.0, a rating from 730 days ago has weight 0.675, and the weight approaches 0.35 for older ratings. Missing, invalid, and future dates contribute only to the long-term fit. With no usable dates, the result is exactly standard Personal Taste.
+
+The second fit uses weighted rating totals for the viewer baseline and weighted residuals and evidence counts for director and writer affinities. When excluding a film's own contribution from its historical credit fit, it removes both the weighted residual and its weight. Genre, Mooduel, and Tag Genome use weighted centering, variance, and ridge regression. The blend is computed independently for each viewer before clipping and shared scoring.

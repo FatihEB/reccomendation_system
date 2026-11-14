@@ -180,6 +180,7 @@ class Profile:
     favorites: list = field(default_factory=list)
     audit: list = field(default_factory=list)
     username: str | None = None
+    rating_dates: dict[int, date] = field(default_factory=dict)
 
 
 def export_members(archive, files):
@@ -303,6 +304,13 @@ def import_profile(catalogue, source, filename=None, manual_favorites=()):
             if index not in chosen_ratings or priority >= chosen_ratings[index]:
                 chosen_ratings[index] = priority
                 profile.ratings[index] = rating
+                profile.rating_dates.pop(index, None)
+                raw_date = priority[1].strip()
+                if re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', raw_date):
+                    try:
+                        profile.rating_dates[index] = date.fromisoformat(raw_date)
+                    except ValueError:
+                        pass
     exported = profile_row.get('Favorite Films') or ''
     entries = manual_favorites or re.findall(r'https?://[^,;\s]+', exported)
     for entry in dict.fromkeys(entries):

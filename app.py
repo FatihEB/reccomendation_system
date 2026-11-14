@@ -18,13 +18,14 @@ from zipfile import BadZipFile
 import numpy as np
 
 from catalog import Catalogue, import_profile, inspect_username
-from models import TASTE, Models, pair_score, rank_candidates
+from models import TASTE, TIME_WEIGHTED_TASTE, Models, pair_score, rank_candidates
 from snapshots import DATA
 
 
 WEB = Path(__file__).resolve().parent / 'web'
 MODELS = {
     'taste': 'Personal Taste',
+    TIME_WEIGHTED_TASTE: 'Personal Taste - Time Weight',
     'taste_genome': 'Personal Taste · genre, mood and storytelling',
     'taste_credits': 'Personal Taste · credits',
     'taste_traits': 'Personal Taste · mood and genre',
@@ -97,7 +98,7 @@ def recommend(catalogue, models, payload, overrides=None):
         if type(runtime) is not int or not 1 <= runtime <= 1440:
             raise ValueError('Runtime limit must be a whole number from 1 to 1440 minutes.')
         allowed &= np.array([movie.runtime is not None and movie.runtime <= runtime for movie in catalogue.movies])
-    scored = [models.score(model, profile.ratings) for profile in profiles]
+    scored = [models.score(model, profile.ratings, rating_dates=profile.rating_dates) for profile in profiles]
     if len(scored) == 2:
         rank = pair_score(scored[0].stars, scored[1].stars)
         references = [score.stars[list(profile.ratings)].mean() for score, profile in zip(scored, profiles)]
@@ -125,7 +126,9 @@ def recommend(catalogue, models, payload, overrides=None):
     return {'model': model, 'candidates': len(indices), 'slots': selected, 'films': films,
             'coverage_adjusted': coverage_adjusted,
             'profiles': [{'username': profile.username, 'ratings': len(profile.ratings), 'watched': len(profile.watched),
-                          'rating_rows': sum(row[0] == 'ratings.csv' for row in profile.audit)} for profile in profiles]}
+                          'time_weighted': score.recent_taste_fit is not None,
+                          'rating_rows': sum(row[0] == 'ratings.csv' for row in profile.audit)}
+                         for profile, score in zip(profiles, scored)]}
 
 
 def form_payload(content_type, body):
@@ -246,6 +249,8 @@ def render_page(models, payload=None, data=None, error='', hosted=False, profile
         names = {slot: f'@{username}' if username else f'Viewer {slot + 1}' for slot, username in usernames.items()}
         summary = [
             f"{names[slot]}: {profile['ratings']} matched ratings, {profile['watched']} watched films"
+            + (' (using standard Personal Taste because no usable rating dates were found)'
+               if data['model'] == TIME_WEIGHTED_TASTE and not profile['time_weighted'] else '')
             for slot, profile in zip(data['slots'], data['profiles'])
         ]
         notice = ' · '.join([*summary, f"{data['candidates']:,} eligible films", MODELS[data['model']]])

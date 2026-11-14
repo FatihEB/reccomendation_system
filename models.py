@@ -1,6 +1,7 @@
 """Auditable baselines, MovieLens fold-in, and two-person ranking."""
 
 from dataclasses import dataclass
+from datetime import date
 import json
 
 import numpy as np
@@ -12,7 +13,10 @@ from train import MODEL
 
 CLEAN = ('random', 'audience', 'mooduel')
 MOVIELENS = ('popularity', 'ml_audience', 'collaborative', 'collaborative_mooduel')
-TASTE = ('taste_traits', 'taste_credits', 'taste', 'taste_genome')
+TIME_WEIGHTED_TASTE = 'taste_time'
+TASTE = ('taste_traits', 'taste_credits', 'taste', 'taste_genome', TIME_WEIGHTED_TASTE)
+RECENT_TASTE_SHARE = 0.30
+RATING_HALF_LIFE_DAYS = 730
 NUMERIC = ('valence', 'arousal', 'dominance', 'absorption', 'hedonic', 'eudaimonic',
            'psych_rich', 'comfort_level', 'conversation_potential')
 CATEGORIES = ('pacing', 'emotional_arc')
@@ -83,6 +87,7 @@ class Scores:
     mood_fit: tuple | None = None
     collaborative_fit: bool = False
     taste_fit: TasteFit | None = None
+    recent_taste_fit: TasteFit | None = None
 
 
 class Models:
@@ -121,7 +126,7 @@ class Models:
         if self.taste.credits is not None:
             self.names += ('taste_credits',)
         if self.taste.genome is not None and self.taste.credits is not None:
-            self.names += ('taste',)
+            self.names += ('taste', TIME_WEIGHTED_TASTE)
         elif self.taste.genome is not None:
             self.names += ('taste_genome',)
 
@@ -130,12 +135,26 @@ class Models:
         delta = np.sum(ratings - base[indices]) / (len(ratings) + 12)
         return base + delta
 
-    def score(self, model, history, seed=42):
+    def score(self, model, history, seed=42, *, rating_dates=None, as_of=None):
         indices = np.fromiter(sorted(history), dtype=np.int64)
         ratings = np.array([history[i] for i in indices])
         if model in TASTE and model in self.names:
-            prediction, taste_fit = self.taste.fit(model, history, indices, ratings)
-            return Scores(np.clip(prediction, 0.5, 5.0), prediction, taste_fit=taste_fit)
+            base_model = 'taste' if model == TIME_WEIGHTED_TASTE else model
+            prediction, taste_fit = self.taste.fit(base_model, history, indices, ratings)
+            recent_fit = None
+            if model == TIME_WEIGHTED_TASTE and rating_dates:
+                as_of = as_of or date.today()
+                dated = np.array([i in rating_dates and rating_dates[i] <= as_of for i in indices])
+                if dated.any():
+                    recent_indices = indices[dated]
+                    age = np.array([(as_of - rating_dates[i]).days for i in recent_indices])
+                    weights = 0.35 + 0.65 * np.exp2(-age / RATING_HALF_LIFE_DAYS)
+                    recent_prediction, recent_fit = self.taste.fit(
+                        base_model, history, recent_indices, ratings[dated], weights
+                    )
+                    prediction = (1 - RECENT_TASTE_SHARE) * prediction + RECENT_TASTE_SHARE * recent_prediction
+            return Scores(np.clip(prediction, 0.5, 5.0), prediction,
+                          taste_fit=taste_fit, recent_taste_fit=recent_fit)
         audience = self.audience(self.tmdb, indices, ratings)
         fitted_mood = None
         collaborative_fit = False
@@ -169,7 +188,11 @@ class Models:
 
     def explain(self, scores, index):
         if scores.taste_fit is not None:
-            return self.taste.explain(index, scores.taste_fit)
+            long_term = self.taste.explain(index, scores.taste_fit)
+            if scores.recent_taste_fit is not None:
+                recent = self.taste.explain(index, scores.recent_taste_fit)
+                return f'Long-term fit (70%): {long_term} Recent fit (30%): {recent}'
+            return long_term
         if scores.mood_fit is not None and self.present[index]:
             effects = self.mood.effects(scores.mood_fit, index)
             arc = self.catalogue.movies[index].mood['emotional_arc']
